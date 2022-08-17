@@ -25,7 +25,6 @@ import java.io.File;
 import java.io.FileReader;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map.Entry;
 import java.util.regex.Matcher;
@@ -59,7 +58,6 @@ import com.hp.hpl.jena.sparql.expr.Expr;
 import com.hp.hpl.jena.sparql.syntax.Element;
 import com.hp.hpl.jena.sparql.syntax.ElementFilter;
 import com.hp.hpl.jena.sparql.syntax.ElementGroup;
-import org.rdfhdt.hdt.triples.IteratorTripleID;
 
 /**
  * Servlet that responds with a Basic Linked Data Fragment.

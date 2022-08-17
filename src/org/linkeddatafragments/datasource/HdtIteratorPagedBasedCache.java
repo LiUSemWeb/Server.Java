@@ -6,7 +6,7 @@ import java.util.*;
 
 public class HdtIteratorPagedBasedCache implements HdtIteratorCache {
 
-    private final static long MILLISECONDSTOGOZOMBIE = 0; // after this time an iterator is considered dead
+    private final static long MILLISECONDSTOGOZOMBIE = 10000; // after this time an iterator is considered dead
 
     private final TreeMap<String, IteratorTripleID> cache = new TreeMap<>();
     private final HashMap<String, Integer> cacheCountBindings = new HashMap<>();

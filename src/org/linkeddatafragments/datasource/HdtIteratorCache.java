@@ -3,15 +3,11 @@ package org.linkeddatafragments.datasource;
 
 import org.rdfhdt.hdt.triples.IteratorTripleID;
 
-import java.util.*;
-
-import org.rdfhdt.hdt.triples.IteratorTripleID;
-
 
 public interface HdtIteratorCache {
 
-    final static long CACHEMAXIMUMSIZE = 1; // in terms of number of iterators
-    final static long NUMBEROFITEMSTOREMOVE = 1; // number of iterators to remove from cache when it gets full
+    final static long CACHEMAXIMUMSIZE = 1000; // in terms of number of iterators
+    final static long NUMBEROFITEMSTOREMOVE = 100; // number of iterators to remove from cache when it gets full
 
     int size();
 
