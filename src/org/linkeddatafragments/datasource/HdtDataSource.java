@@ -29,18 +29,17 @@ import com.hp.hpl.jena.sparql.engine.binding.Binding;
 
 /**
  * An HDT data source of Basic Linked Data Fragments.
- * 
+ *
  * @author Ruben Verborgh
  */
 public class HdtDataSource extends DataSource
 {
-
     private final HDT datasource;
     private final NodeDictionary dictionary;
 
     /**
      * Creates a new HdtDataSource.
-     * 
+     *
      * @param title
      *            title of the datasource
      * @param description
@@ -60,8 +59,8 @@ public class HdtDataSource extends DataSource
 
     @Override
     public TriplePatternFragment getFragment(TripleElement _subject,
-            TripleElement _predicate, TripleElement _object, final long offset,
-            final long limit)
+                                             TripleElement _predicate, TripleElement _object, final long offset,
+                                             final long limit, HdtIteratorCache fragmentsCache)
     {
         Resource subject = null;
         if (!_subject.name.equals("Var"))
@@ -88,63 +87,89 @@ public class HdtDataSource extends DataSource
             throw new IllegalArgumentException("limit");
         }
 
-        // look up the result from the HDT datasource
-        final int subjectId = subject == null ? 0
-                : dictionary.getIntID(subject.asNode(),
-                        TripleComponentRole.SUBJECT);
-        final int predicateId = predicate == null ? 0
-                : dictionary.getIntID(predicate.asNode(),
-                        TripleComponentRole.PREDICATE);
-        final int objectId = object == null ? 0
-                : dictionary.getIntID(object.asNode(),
-                        TripleComponentRole.OBJECT);
-        if (subjectId < 0 || predicateId < 0 || objectId < 0)
-        {
-            return new TriplePatternFragmentBase();
-        }
-        final Model triples = ModelFactory.createDefaultModel();
-        final IteratorTripleID matches = datasource.getTriples()
-                .search(new TripleID(subjectId, predicateId, objectId));
-        final boolean hasMatches = matches.hasNext();
+        // dataSourceCache key
+        final String cacheKey = String.format("%20d", offset) + "+" + subject + "+" + predicate + "+" + object;
 
-        if (hasMatches)
+        boolean atOffset = true;
+        final Model triples = ModelFactory.createDefaultModel();
+        final IteratorTripleID matches;
+        final boolean hasMatches;
+
+        if (!fragmentsCache.containsKey(cacheKey))
         {
-            // try to jump directly to the offset
-            boolean atOffset;
-            if (matches.canGoTo())
+            // look up the result from the HDT datasource
+            final int subjectId = subject == null ? 0
+                    : dictionary.getIntID(subject.asNode(),
+                    TripleComponentRole.SUBJECT);
+            final int predicateId = predicate == null ? 0
+                    : dictionary.getIntID(predicate.asNode(),
+                    TripleComponentRole.PREDICATE);
+            final int objectId = object == null ? 0
+                    : dictionary.getIntID(object.asNode(),
+                    TripleComponentRole.OBJECT);
+            if (subjectId < 0 || predicateId < 0 || objectId < 0)
             {
-                try
-                {
-                    matches.goTo(offset);
-                    atOffset = true;
-                }
-                // if the offset is outside the bounds, this page has no matches
-                catch (IndexOutOfBoundsException exception)
-                {
-                    atOffset = false;
-                }
+                return new TriplePatternFragmentBase();
             }
-            // if not possible, advance to the offset iteratively
-            else
+            matches = datasource.getTriples()
+                    .search(new TripleID(subjectId, predicateId, objectId));
+            hasMatches = matches.hasNext();
+
+            if (hasMatches)
             {
-                matches.goToStart();
-                for (int i = 0; !(atOffset = i == offset)
-                        && matches.hasNext(); i++)
-                    matches.next();
-            }
-            // try to add `limit` triples to the result model
-            if (atOffset)
-            {
-                for (int i = 0; i < limit && matches.hasNext(); i++)
-                    triples.add(triples.asStatement(toTriple(matches.next())));
+                // try to jump directly to the offset
+                if (matches.canGoTo())
+                {
+                    try
+                    {
+                        matches.goTo(offset);
+                        atOffset = true;
+                    }
+                    // if the offset is outside the bounds, this page has no matches
+                    catch (IndexOutOfBoundsException exception)
+                    {
+                        atOffset = false;
+                    }
+                }
+                // if not possible, advance to the offset iteratively
+                else
+                {
+                    matches.goToStart();
+                    for (int i = 0; !(atOffset = i == offset)
+                            && matches.hasNext(); i++)
+                        matches.next();
+                }
             }
         }
+        else
+        {
+            matches = fragmentsCache.get(cacheKey);
+            hasMatches = matches.hasNext();
+        }
+
+        // try to add `limit` triples to the result model
+        if (atOffset)
+        {
+            for (int i = 0; i < limit && matches.hasNext(); i++)
+                triples.add(triples.asStatement(toTriple(matches.next())));
+        }
+
+        // update the cache
+        fragmentsCache.remove(cacheKey);
+        if (matches.hasNext() && offset > 0) // do not add to cache if it is the first page
+        {
+            final long newOffset = offset + limit;
+            final String newCacheKey = String.format("%20d", newOffset) + "+" + subject + "+" + predicate + "+" + object;
+            fragmentsCache.put(newCacheKey, matches, -1, offset);
+        }
+
+
 
         // estimates can be wrong; ensure 0 is returned if there are no results,
         // and always more than actual results
         final long estimatedTotal = triples.size() > 0
                 ? Math.max(offset + triples.size() + 1,
-                        matches.estimatedNumResults())
+                matches.estimatedNumResults())
                 : hasMatches ? Math.max(matches.estimatedNumResults(), 1) : 0;
 
         // create the fragment
@@ -166,7 +191,7 @@ public class HdtDataSource extends DataSource
 
     /**
      * Converts the HDT triple to a Jena Triple.
-     * 
+     *
      * @param tripleId
      *            the HDT triple
      * @return the Jena triple
@@ -186,55 +211,106 @@ public class HdtDataSource extends DataSource
     public TriplePatternFragment getBindingFragment(
             final TripleElement _subject, final TripleElement _predicate,
             final TripleElement _object, final long offset, final long limit,
-            final List<Binding> bindings, final List<Var> foundVariables)
+            final List<Binding> bindings, final List<Var> foundVariables, HdtIteratorCache fragmentsCache)
     {
         return getBindingFragmentByTriplePatternSubstitution(
                 // return getBindingFragmentByTestingHdtMatches(
-                _subject, _predicate, _object, offset, limit, bindings, foundVariables);
+                _subject, _predicate, _object, offset, limit, bindings, foundVariables, fragmentsCache);
     }
 
     public TriplePatternFragment getBindingFragmentByTriplePatternSubstitution(
             final TripleElement _subject, final TripleElement _predicate,
             final TripleElement _object, final long offset, final long limit,
-            final List<Binding> bindings, final List<Var> foundVariables)
+            final List<Binding> bindings, final List<Var> foundVariables, HdtIteratorCache fragmentsCache)
     {
-        final TripleIDCachingIterator it = new TripleIDCachingIterator(
-                                     bindings, foundVariables,
-                                     _subject, _predicate, _object );
+        Resource subject = null;
+        if (!_subject.name.equals("Var"))    { subject = (Resource) _subject.object; }
+        Property predicate = null;
+        if (!_predicate.name.equals("Var"))  { predicate = (Property) _predicate.object; }
+        RDFNode object = null;
+        if (!_object.name.equals("Var"))     { object = (RDFNode) _object.object; }
 
-        final Model triples = ModelFactory.createDefaultModel();
-        int triplesCheckedSoFar = 0;
+        // dataSourceCache key
+        final String bindingsString = String.valueOf(bindings);
+        final String cacheKey = String.format("%20d", offset) + "+" + subject + "+" + predicate + "+" + object + "+" + bindingsString;
+
         int triplesAddedInCurrentPage = 0;
-        boolean atOffset;
+        final Model triples = ModelFactory.createDefaultModel();
+        final TripleIDCachingIterator it = new TripleIDCachingIterator(bindings, foundVariables, _subject, _predicate, _object );
         int countBindingsSoFar = 0;
-        while ( it.hasNext() )
+        IteratorTripleID matches = null;
+
+        if (fragmentsCache.containsKey(cacheKey)) // countBindingsSoFarCache also contains cacheKey
         {
-            final TripleID t = it.next();
-            final IteratorTripleID matches = datasource.getTriples().search(t);
-            final boolean hasMatches = matches.hasNext();
-            if (hasMatches)
+            matches = fragmentsCache.get(cacheKey);
+            countBindingsSoFar = fragmentsCache.getBindingsCount(cacheKey);
+            int updateTripleIDCachingIterator = 0;  // aux var in case it is needed to update TripleIDCachingIterator
+
+            while (triplesAddedInCurrentPage < limit && matches.hasNext())
             {
-                matches.goToStart();
-                while (!(atOffset = (triplesCheckedSoFar == offset))
-                        && matches.hasNext())
+                while (triplesAddedInCurrentPage < limit && matches.hasNext())
                 {
-                    matches.next();
-                    triplesCheckedSoFar++;
+                    triples.add(triples.asStatement(toTriple(matches.next())));
+                    triplesAddedInCurrentPage++;
                 }
-                // try to add `limit` triples to the result model
-                if (atOffset)
+                if (triplesAddedInCurrentPage < limit && !matches.hasNext())
                 {
-                    while (triplesAddedInCurrentPage < limit
-                            && matches.hasNext())
+                    while (updateTripleIDCachingIterator < countBindingsSoFar)
                     {
-                        triples.add(
-                                triples.asStatement(toTriple(matches.next())));
-                        triplesAddedInCurrentPage++;
+                        it.next();
+                        updateTripleIDCachingIterator++;
+                    }
+                    if (it.hasNext())
+                    {
+                        TripleID t = it.next();
+                        updateTripleIDCachingIterator++;
+                        matches = datasource.getTriples().search(t);
+                        countBindingsSoFar++;
                     }
                 }
             }
-            countBindingsSoFar++;
         }
+        else
+        {
+            int triplesCheckedSoFar = 0;
+            boolean atOffset;
+
+            while ( it.hasNext() && triplesAddedInCurrentPage < limit)
+            {
+                final TripleID t = it.next();
+                matches = datasource.getTriples().search(t);
+                final boolean hasMatches = matches.hasNext();
+                if (hasMatches)
+                {
+                    matches.goToStart();
+                    while (!(atOffset = (triplesCheckedSoFar == offset)) && matches.hasNext())
+                    {
+                        matches.next();
+                        triplesCheckedSoFar++;
+                    }
+                    // try to add `limit` triples to the result model
+                    if (atOffset)
+                    {
+                        while (triplesAddedInCurrentPage < limit  && matches.hasNext())
+                        {
+                            triples.add(triples.asStatement(toTriple(matches.next())));
+                            triplesAddedInCurrentPage++;
+                        }
+                    }
+                }
+                countBindingsSoFar++;
+            }
+        }
+
+        fragmentsCache.remove((cacheKey));
+        // Put in cache only after the first page (offset > 0)
+        if (matches != null && matches.hasNext() && offset > 0)
+        {
+            final long newOffset = offset + limit;
+            final String newCacheKey = String.format("%20d", newOffset) + "+" + subject + "+" + predicate + "+" + object + "+" + bindingsString;
+            fragmentsCache.put(newCacheKey, matches, countBindingsSoFar, offset);
+        }
+
 
         final int bindingsSize = bindings.size();
         final long minimumTotal = offset + triplesAddedInCurrentPage + 1;
@@ -398,7 +474,7 @@ public class HdtDataSource extends DataSource
         {
             subjectId = _subject.object == null ? 0
                     : dictionary.getIntID(((Resource) _subject.object).asNode(),
-                            TripleComponentRole.SUBJECT);
+                    TripleComponentRole.SUBJECT);
         }
         if (_predicate.name.equals("Var"))
         {
@@ -410,8 +486,8 @@ public class HdtDataSource extends DataSource
         {
             predicateId = _predicate == null ? 0
                     : dictionary.getIntID(
-                            ((RDFNode) _predicate.object).asNode(),
-                            TripleComponentRole.PREDICATE);
+                    ((RDFNode) _predicate.object).asNode(),
+                    TripleComponentRole.PREDICATE);
         }
         if (_object.name.equals("Var"))
         {
@@ -423,7 +499,7 @@ public class HdtDataSource extends DataSource
         {
             objectId = _object.object == null ? 0
                     : dictionary.getIntID(((RDFNode) _object.object).asNode(),
-                            TripleComponentRole.OBJECT);
+                    TripleComponentRole.OBJECT);
         }
         if (subjectId < 0 || predicateId < 0 || objectId < 0)
         {
@@ -443,9 +519,9 @@ public class HdtDataSource extends DataSource
                 ? (Var) _object.object : null;
 
         int testedMatchesSoFar = 0; // everything from 'matches' that we have
-                                    // looked at so far
+        // looked at so far
         int validMatchesSoFar = 0; // the subset of 'testedMatchesSoFar' that
-                                   // turned out to be valid for the brTPF
+        // turned out to be valid for the brTPF
         int testedMatchesUntilFirstPageOfValidMatches = 0;
         if (hasMatches)
         {
@@ -544,9 +620,9 @@ public class HdtDataSource extends DataSource
      * with at least on of the solution mappings in solMapSet.
      */
     static public boolean isValid(final TripleID tripleId,
-            final List<Map<Var, Integer>> solmapsWithHdtIDs,
-            final Var subjectVar, final Var predicateVar, final Var objectVar,
-            final NodeDictionary dictionary)
+                                  final List<Map<Var, Integer>> solmapsWithHdtIDs,
+                                  final Var subjectVar, final Var predicateVar, final Var objectVar,
+                                  final NodeDictionary dictionary)
     {
         for (Map<Var, Integer> solMapWithHdtIDs : solmapsWithHdtIDs)
         {
@@ -566,9 +642,9 @@ public class HdtDataSource extends DataSource
      * with the given solution mapping (solMap).
      */
     static public boolean checkCompatibility(final TripleID tripleId,
-            final Map<Var, Integer> solMapWithHdtIDs, final Var subjectVar,
-            final Var predicateVar, final Var objectVar,
-            final NodeDictionary dictionary)
+                                             final Map<Var, Integer> solMapWithHdtIDs, final Var subjectVar,
+                                             final Var predicateVar, final Var objectVar,
+                                             final NodeDictionary dictionary)
     {
         if (subjectVar != null && solMapWithHdtIDs.containsKey(subjectVar))
         {
@@ -656,19 +732,19 @@ public class HdtDataSource extends DataSource
             final boolean needToCheckForDuplicates = ( numOfVarsCoveredBySolMaps < foundVariables.size() );
 
             curSubjID = ( subjectOfTP.node == null ) ?
-                            0 :
-                            dictionary.getIntID( subjectOfTP.node,
-                                                 TripleComponentRole.SUBJECT );
+                    0 :
+                    dictionary.getIntID( subjectOfTP.node,
+                            TripleComponentRole.SUBJECT );
 
             curPredID = ( predicateOfTP.node == null ) ?
-                            0 :
-                            dictionary.getIntID( predicateOfTP.node,
-                                                 TripleComponentRole.PREDICATE );
+                    0 :
+                    dictionary.getIntID( predicateOfTP.node,
+                            TripleComponentRole.PREDICATE );
 
             curObjID = ( objectOfTP.node == null ) ?
-                            0 :
-                            dictionary.getIntID( objectOfTP.node,
-                                                 TripleComponentRole.OBJECT );
+                    0 :
+                    dictionary.getIntID( objectOfTP.node,
+                            TripleComponentRole.OBJECT );
 
             canHaveMatches = ( curSubjID >= 0 ) && ( curPredID >= 0 ) && ( curObjID >= 0 );
 
@@ -684,7 +760,7 @@ public class HdtDataSource extends DataSource
                     final List<List<Node>> oBindingsForS;
                     int sIdx;
                     if (    ! needToCheckForDuplicates
-                         || (sIdx = sBindings.indexOf(s)) == -1 )
+                            || (sIdx = sBindings.indexOf(s)) == -1 )
                     {
                         sBindings.add( s );
 
@@ -703,7 +779,7 @@ public class HdtDataSource extends DataSource
                     final List<Node> oBindingsForSP;
                     int pIdx;
                     if (    ! needToCheckForDuplicates
-                         || (pIdx = pBindingsForS.indexOf(p)) == -1 )
+                            || (pIdx = pBindingsForS.indexOf(p)) == -1 )
                     {
                         pBindingsForS.add( p );
 
@@ -717,7 +793,7 @@ public class HdtDataSource extends DataSource
 
                     int oIdx;
                     if (    ! needToCheckForDuplicates
-                         || (pIdx = oBindingsForSP.indexOf(o)) == -1 )
+                            || (pIdx = oBindingsForSP.indexOf(o)) == -1 )
                     {
                         oBindingsForSP.add( o );
                     }
@@ -758,7 +834,7 @@ public class HdtDataSource extends DataSource
 
                         if ( sIsVar )
                             curSubjID = dictionary.getIntID( sBindings.get(curSubjIdx),
-                                                             TripleComponentRole.SUBJECT );
+                                    TripleComponentRole.SUBJECT );
                     }
 
                     curObjBindings = oBindings.get( curSubjIdx ).get( curPredIdx );
@@ -766,12 +842,12 @@ public class HdtDataSource extends DataSource
 
                     if ( pIsVar )
                         curPredID = dictionary.getIntID( curPredBindings.get(curPredIdx),
-                                                         TripleComponentRole.PREDICATE );
+                                TripleComponentRole.PREDICATE );
                 }
 
                 if ( oIsVar )
                     curObjID = dictionary.getIntID( curObjBindings.get(curObjIdx),
-                                                    TripleComponentRole.OBJECT );
+                            TripleComponentRole.OBJECT );
             }
             while ( curSubjID == -1 || curPredID == -1 || curObjID == -1 );
 
@@ -802,21 +878,21 @@ public class HdtDataSource extends DataSource
 
                 if ( sIsVar )
                     curSubjID = dictionary.getIntID( sBindings.get(curSubjIdx),
-                                                     TripleComponentRole.SUBJECT );
+                            TripleComponentRole.SUBJECT );
 
                 if ( pIsVar )
                     curPredID = dictionary.getIntID( curPredBindings.get(curPredIdx),
-                                                     TripleComponentRole.PREDICATE );
+                            TripleComponentRole.PREDICATE );
 
                 if ( oIsVar )
                     curObjID = dictionary.getIntID( curObjBindings.get(curObjIdx),
-                                                    TripleComponentRole.OBJECT );
+                            TripleComponentRole.OBJECT );
             }
         }
 
     } // end of TripleIDProducingIterator
 
-    protected class TripleIDCachingIterator implements Iterator<TripleID>
+    public class TripleIDCachingIterator implements Iterator<TripleID>
     {
         protected final TripleIDProducingIterator it;
         protected final List<TripleID> cache = new ArrayList<TripleID> ();
@@ -831,10 +907,10 @@ public class HdtDataSource extends DataSource
                                         final TripleElement objectOfTP )
         {
             it = new TripleIDProducingIterator( jenaSolMaps,
-                                                foundVariables,
-                                                subjectOfTP,
-                                                predicateOfTP,
-                                                objectOfTP );
+                    foundVariables,
+                    subjectOfTP,
+                    predicateOfTP,
+                    objectOfTP );
         }
 
         @Override

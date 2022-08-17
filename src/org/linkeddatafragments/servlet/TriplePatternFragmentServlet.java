@@ -25,6 +25,7 @@ import java.io.File;
 import java.io.FileReader;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map.Entry;
 import java.util.regex.Matcher;
@@ -38,9 +39,7 @@ import javax.servlet.http.HttpServletResponse;
 
 import org.apache.http.client.utils.URIBuilder;
 import org.linkeddatafragments.config.ConfigReader;
-import org.linkeddatafragments.datasource.DataSourceFactory;
-import org.linkeddatafragments.datasource.IDataSource;
-import org.linkeddatafragments.datasource.TriplePatternFragment;
+import org.linkeddatafragments.datasource.*;
 import org.linkeddatafragments.util.TripleElement;
 
 import com.google.gson.JsonObject;
@@ -60,10 +59,11 @@ import com.hp.hpl.jena.sparql.expr.Expr;
 import com.hp.hpl.jena.sparql.syntax.Element;
 import com.hp.hpl.jena.sparql.syntax.ElementFilter;
 import com.hp.hpl.jena.sparql.syntax.ElementGroup;
+import org.rdfhdt.hdt.triples.IteratorTripleID;
 
 /**
  * Servlet that responds with a Basic Linked Data Fragment.
- * 
+ *
  * @author Ruben Verborgh
  */
 public class TriplePatternFragmentServlet extends HttpServlet
@@ -76,7 +76,10 @@ public class TriplePatternFragmentServlet extends HttpServlet
     private final static long TRIPLESPERPAGE = 100;
 
     private ConfigReader config;
-    private HashMap<String, IDataSource> dataSources = new HashMap<>();
+    private final HashMap<String, IDataSource> dataSources = new HashMap<>();
+
+    private final HdtIteratorCache fragmentsCache = new HdtIteratorPagedBasedCache();
+    //private final HdtIteratorCache fragmentsCache = new HdtIteratorLRUCache();
 
     @Override
     public void init(ServletConfig servletConfig) throws ServletException
@@ -136,7 +139,7 @@ public class TriplePatternFragmentServlet extends HttpServlet
             catch( Exception e ) {
                 // ignore
             }
-        }   
+        }
     }
 
     @Override
@@ -146,7 +149,7 @@ public class TriplePatternFragmentServlet extends HttpServlet
 //if ( request.getQueryString() == null ) {
 //System.out.println( request.getRequestURI() );
 //} else {
-//System.out.println( request.getRequestURI() + "?" + request.getQueryString() );
+        //System.out.println( request.getRequestURI() + "?" + request.getQueryString() );
 //}
         // possible inputs: s: ?var, p: blank node, o: literal/URI
         try
@@ -190,21 +193,17 @@ public class TriplePatternFragmentServlet extends HttpServlet
 
             TriplePatternFragment _fragment = null;
             if (bindings != null)
-            {
-                _fragment = dataSource.getBindingFragment(subject, predicate,
-                        object, offset, limit, bindings, foundVariables);
-            }
+                _fragment = dataSource.getBindingFragment(subject, predicate,  object, offset, limit, bindings, foundVariables, fragmentsCache);
             else
-            {
-                _fragment = dataSource.getFragment(subject, predicate, object,
-                        offset, limit);
-            }
+                _fragment = dataSource.getFragment(subject, predicate, object, offset, limit, fragmentsCache);
+
 
             final TriplePatternFragment fragment = _fragment;
 
             // fill the output model
             final Model output = fragment.getTriples();
             output.setNsPrefixes(config.getPrefixes());
+
 
             // add dataset metadata
             final String hostName = request.getHeader("Host");
@@ -281,15 +280,15 @@ public class TriplePatternFragmentServlet extends HttpServlet
         }
         catch (Exception e)
         {
-System.err.println( "Exception caught: " + e.getMessage() );
-e.printStackTrace( System.err );
+            System.err.println( "Exception caught: " + e.getMessage() );
+            e.printStackTrace( System.err );
             throw new ServletException( e.getMessage(), e );
         }
     }
 
     /**
      * Parses the given value as set of bindings.
-     * 
+     *
      * @param value containing the SPARQL bindings
      * @param foundVariables a list with variables found in the VALUES clause
      *
@@ -305,12 +304,13 @@ e.printStackTrace( System.err );
         String newString = "select * where {} VALUES " + value;
         Query q = QueryFactory.create(newString);
         foundVariables.addAll( q.getValuesVariables() );
+
         return q.getValuesData();
     }
 
     /**
      * Parses the given value as a set of FILTER operators.
-     * 
+     *
      * @param value
      *            with a string containing FILTER expressions
      * @return the parsed FILTER expressions in a single FILTER
@@ -344,7 +344,7 @@ e.printStackTrace( System.err );
 
     /**
      * Parses the given value as an integer.
-     * 
+     *
      * @param value
      *            the value
      * @return the parsed value
@@ -363,7 +363,7 @@ e.printStackTrace( System.err );
 
     /**
      * Parses the given value as an RDF resource.
-     * 
+     *
      * @param value
      *            the value
      * @return the parsed value, or null if unspecified
@@ -386,7 +386,7 @@ e.printStackTrace( System.err );
 
     /**
      * Parses the given value as an RDF property.
-     * 
+     *
      * @param value
      *            the value
      * @return the parsed value, or null if unspecified
@@ -424,7 +424,7 @@ e.printStackTrace( System.err );
 
     /**
      * Parses the given value as an RDF node.
-     * 
+     *
      * @param value
      *            the value
      * @return the parsed value, or null if unspecified
@@ -440,43 +440,43 @@ e.printStackTrace( System.err );
         final char firstChar = value.charAt(0);
         switch (firstChar)
         {
-        // variable or blank node indicates an unknown
-        case '?':
-            return new TripleElement(Var.alloc(value.replaceAll("\\?","")));
-        case '_':
-            return null;
+            // variable or blank node indicates an unknown
+            case '?':
+                return new TripleElement(Var.alloc(value.replaceAll("\\?","")));
+            case '_':
+                return null;
             // angular brackets indicate a URI
-        case '<':
-            return new TripleElement(
-                    ResourceFactory.createResource(value.substring(1,
-                            value.length() - 1)));
-            // quotes indicate a string
-        case '"':
-            final Matcher matcher = STRINGPATTERN.matcher(value);
-            if (matcher.matches())
-            {
-                final String body = matcher.group(1);
-                final String lang = matcher.group(2);
-                final String type = matcher.group(3);
-                if (lang != null)
-                {
-                    return new TripleElement(
-                            ResourceFactory.createLangLiteral(body, lang));
-                }
-                if (type != null)
-                {
-                    return new TripleElement(
-                            ResourceFactory.createTypedLiteral(body,
-                                    types.getSafeTypeByName(type)));
-                }
+            case '<':
                 return new TripleElement(
-                        ResourceFactory.createPlainLiteral(body));
-            }
-            return new TripleElement("Property", INVALID_URI);
+                        ResourceFactory.createResource(value.substring(1,
+                                value.length() - 1)));
+            // quotes indicate a string
+            case '"':
+                final Matcher matcher = STRINGPATTERN.matcher(value);
+                if (matcher.matches())
+                {
+                    final String body = matcher.group(1);
+                    final String lang = matcher.group(2);
+                    final String type = matcher.group(3);
+                    if (lang != null)
+                    {
+                        return new TripleElement(
+                                ResourceFactory.createLangLiteral(body, lang));
+                    }
+                    if (type != null)
+                    {
+                        return new TripleElement(
+                                ResourceFactory.createTypedLiteral(body,
+                                        types.getSafeTypeByName(type)));
+                    }
+                    return new TripleElement(
+                            ResourceFactory.createPlainLiteral(body));
+                }
+                return new TripleElement("Property", INVALID_URI);
             // assume it's a URI without angular brackets
-        default:
-            return new TripleElement(
-                    ResourceFactory.createResource(value));
+            default:
+                return new TripleElement(
+                        ResourceFactory.createResource(value));
         }
     }
 }
