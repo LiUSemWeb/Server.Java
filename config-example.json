@@ -3,30 +3,11 @@
 
   "datasources": {
     "watdiv": {
-      "title": "Watdiv",
+      "title": "watdiv",
       "type": "HdtDatasource",
-      "description": "WatDiv with HDT back-end",
-      "settings": { "file": "data/watdiv.10M.hdt" }
-    },
-    "watdivBG": {
-      "title": "WatDiv",
-      "type": "BlazegraphDataSource",
-      "description": "WatDiv benchmark dataset with a Blazegraph back-end",
-      "settings": {
-           "com.bigdata.rdf.sail.truthMaintenance": "false",
-           "com.bigdata.rdf.store.AbstractTripleStore.triplesMode": "true",
-           "com.bigdata.rdf.store.AbstractTripleStore.axiomsClass": "com.bigdata.rdf.axioms.NoAxioms",
-           "com.bigdata.rdf.store.AbstractTripleStore.justify": "false",
-           "com.bigdata.rdf.store.AbstractTripleStore.statementIdentifiers": "false",
-           "com.bigdata.rdf.store.AbstractTripleStore.textIndex": "false",
-           //"com.bigdata.journal.AbstractJournal.readOnly": "true",
-           "com.bigdata.journal.AbstractJournal.file": "data/watdiv.10M.jnl", // used for DiskRW mode
-           "file": "data/watdiv.10M.nt",                                      // used for MemStore mode
-// chose between any of the following two modes
-           "com.bigdata.journal.AbstractJournal.bufferMode":
-                 //"DiskRW"
-                 "MemStore"
-      }
+      "description": "watdiv",
+      "settings": { "file": "watdiv.10M.hdt" }
+    }
   },
 
   "prefixes": {

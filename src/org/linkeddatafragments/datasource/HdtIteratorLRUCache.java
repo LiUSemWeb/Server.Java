@@ -10,8 +10,8 @@ import org.rdfhdt.hdt.triples.IteratorTripleID;
 
 public class HdtIteratorLRUCache implements HdtIteratorCache {
 
-    private final HashMap<String, IteratorTripleID> cache = new LinkedHashMap<>();
-    private final HashMap<String, Integer> cacheCountBindings = new HashMap<>();
+    private final Map<String, IteratorTripleID> cache = Collections.synchronizedMap(new LinkedHashMap<String, IteratorTripleID>());
+    private final Map<String, Integer> cacheCountBindings = Collections.synchronizedMap(new HashMap<String, Integer>());
 
 
     private void clear() {
@@ -29,7 +29,7 @@ public class HdtIteratorLRUCache implements HdtIteratorCache {
     }
 
     public boolean containsKey(String key){
-        return this.cache.containsKey(key);
+        return this.cache.containsKey(key) && this.cacheCountBindings.containsKey(key);
     }
 
     public IteratorTripleID get(String key){

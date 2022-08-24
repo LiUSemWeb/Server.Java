@@ -8,9 +8,9 @@ public class HdtIteratorPagedBasedCache implements HdtIteratorCache {
 
     private final static long MILLISECONDSTOGOZOMBIE = 10000; // after this time an iterator is considered dead
 
-    private final TreeMap<String, IteratorTripleID> cache = new TreeMap<>();
-    private final HashMap<String, Integer> cacheCountBindings = new HashMap<>();
-    private final LinkedHashMap<String, Long> cacheTimestamps = new LinkedHashMap<>(); // ordered on insertion
+    private final Map<String, IteratorTripleID> cache = Collections.synchronizedMap(new TreeMap<String, IteratorTripleID>());
+    private final Map<String, Integer> cacheCountBindings = Collections.synchronizedMap(new HashMap<String, Integer>());
+    private final Map<String, Long> cacheTimestamps = Collections.synchronizedMap(new LinkedHashMap<String, Long>()); // ordered on insertion
 
 
     private void clear() {
@@ -50,7 +50,7 @@ public class HdtIteratorPagedBasedCache implements HdtIteratorCache {
 
     @Override
     public boolean containsKey(String key){
-        return this.cache.containsKey(key);
+        return this.cache.containsKey(key) && this.cacheCountBindings.containsKey(key) && this.cacheTimestamps.containsKey(key);
     }
 
     @Override

@@ -7,7 +7,7 @@ import org.rdfhdt.hdt.triples.IteratorTripleID;
 public interface HdtIteratorCache {
 
     final static long CACHEMAXIMUMSIZE = 1000; // in terms of number of iterators
-    final static long NUMBEROFITEMSTOREMOVE = 100; // number of iterators to remove from cache when it gets full
+    final static long NUMBEROFITEMSTOREMOVE = 200; // number of iterators to remove from cache when it gets full
 
     int size();
 
