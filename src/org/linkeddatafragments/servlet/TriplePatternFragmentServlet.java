@@ -76,8 +76,8 @@ public class TriplePatternFragmentServlet extends HttpServlet
     private ConfigReader config;
     private final HashMap<String, IDataSource> dataSources = new HashMap<>();
 
-    //private final HdtIteratorCache fragmentsCache = new HdtIteratorPagedBasedCache();
-    private final HdtIteratorCache fragmentsCache = new HdtIteratorLRUCache();
+    //private final static HdtIteratorCache fragmentsCache = new HdtIteratorPagedBasedCache();
+    private final static HdtIteratorCache fragmentsCache = new HdtIteratorLRUCache();
 
     @Override
     public void init(ServletConfig servletConfig) throws ServletException
